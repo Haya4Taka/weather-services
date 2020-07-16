@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS cities (
-  id smallint(6) unsigned NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  id smallint(6) unsigned NOT NULL PRIMARY KEY,
   name varchar(85) NOT NULL UNIQUE
 );
 
