@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: db-config
+stringData:
+  db-url: ${DB_URL}
+  db-username: weatheradmin
+  db-password: ${DB_PASSWORD}
+  db-name: weather_services
