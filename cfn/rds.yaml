@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  BaseName:
+    Type: String
+    Default: weather-services
+
+  BaseVPC:
+    Type: AWS::EC2::VPC::Id
+
+  AvailabilityZone1:
+    Type: String
+    Default: ap-northeast-1a
+
+  AvailabilityZone2:
+    Type: String
+    Default: ap-northeast-1c
+
+  PublicSubnet1aCidr:
+    Type: String
+    Default: 10.1.0.0/24
+
+  PublicSubnet1cCidr:
+    Type: String
+    Default: 10.1.1.0/24
+
+  PrivateSubnet1aCidr:
+    Type: String
+    Default: 10.1.10.0/24
+
+  PrivateSubnet1cCidr:
+    Type: String
+    Default: 10.1.11.0/24
+
+  RdsSubnet1aCidr:
+    Type: String
+    Default: 10.1.20.0/24
+
+  RdsSubnet1cCidr:
+    Type: String
+    Default: 10.1.21.0/24
+  
+  JumpSubnetCidr:
+    Type: String
+    Default: 10.1.5.0/24
+
+  # セッションマネージャー経由でアクセスするので
+  # 特別な設定がおそらく不要になっている。
+  JumpRouteTalbe:
+    Type: String
+
+  JumpServerImageId:
+    Type: String
+    Default: ami-00d101850e971728d # ap-northeast-1, SSD, Amazon Linux 2
+
+
+Resources:
+  # ------------------------------------------------------------#
+  # Subnet
+  # ------------------------------------------------------------#
+  RdsSubnet1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone1 
+      VpcId: !Ref BaseVPC
+      CidrBlock: !Ref RdsSubnet1aCidr
+      Tags:
+        - Key: Name
+          Value: !Sub ${BaseName}-RdsSubnet1a
+
+  RdsSubnet1c:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone2
+      VpcId: !Ref BaseVPC
+      CidrBlock: !Ref RdsSubnet1cCidr
+      Tags:
+        - Key: Name
+          Value: !Sub ${BaseName}-RdsSubnet1c
+
+  JumpSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone1
+      VpcId: !Ref BaseVPC
+      CidrBlock: !Ref JumpSubnetCidr
+      Tags:
+        - Key: Name
+          Value: !Sub ${BaseName}-JumpSubnet
+
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: rds-subnet-group-weather-services
+      DBSubnetGroupDescription: "DB Subnet Group"
+      SubnetIds:
+        - !Ref RdsSubnet1a
+        - !Ref RdsSubnet1c
+
+  # ------------------------------------------------------------#
+  # SecurityGroup
+  # ------------------------------------------------------------#
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for RDS
+      VpcId: !Ref BaseVPC
+
+  RdsIngressFromPublicSubnet1a:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref PublicSubnet1aCidr
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  RdsIngressFromPublicSubnet1c:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref PublicSubnet1cCidr
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  RdsIngressFromPrivateSubnet1a:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref PrivateSubnet1aCidr
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  RdsIngressFromPrivateSubnet1c:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref PrivateSubnet1cCidr
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  RdsIngressFromJumpSubnet:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref JumpSubnetCidr
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  JumpServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Jump Server
+      VpcId: !Ref BaseVPC
+
+  # ------------------------------------------------------------#
+  # DB
+  # ------------------------------------------------------------#
+  WeatherDB:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: eks-db
+      Engine: mysql
+      EngineVersion: 5.7.30
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: 10
+      StorageType: gp2
+      DBName: weather_services
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsMasterSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsMasterSecret, ':SecretString:password}}' ]]
+      DBSubnetGroupName: !Ref RdsSubnetGroup
+      PubliclyAccessible: false
+      MultiAZ: true
+      PreferredBackupWindow: 18:00-18:30
+      PreferredMaintenanceWindow: sat:19:00-sat:19:30
+      AutoMinorVersionUpgrade: false
+      DBParameterGroupName: !Ref DBParameterGroup
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroup
+      CopyTagsToSnapshot: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mysql5.7
+      Description: Parameter Group for MySQL 5.7
+
+  
+  RdsMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "weatheradmin"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'''
+      Name: RdsMasterSecret
+
+  RdsUserSecret: # 不要の可能性あり。マスターで作業できればそれで良い。
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "user"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\''{}#%&*<>[]^`|'
+      Name: RdsUserSecret
+
+  RdsSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RdsMasterSecret
+      TargetId: !Ref WeatherDB
+      TargetType: AWS::RDS::DBInstance
+  
+  
+  # ------------------------------------------------------------#
+  # RouteTable
+  # ------------------------------------------------------------#
+  OpeServerSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref JumpSubnet
+      RouteTableId: !Ref JumpRouteTalbe
+
+
+  # ------------------------------------------------------------#
+  # JumpServer
+  # ------------------------------------------------------------#
+  JumpServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${BaseName}-JumpServerRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM # systems manager利用の許可
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  JumpServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref JumpServerRole
+
+  JumpServerEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  JumpServerEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt JumpServerEIP.AllocationId
+      InstanceId: !Ref JumpServerInstance
+
+  JumpServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: !Ref JumpServerImageId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: 8
+            DeleteOnTermination: true
+      NetworkInterfaces:
+        - SubnetId: !Ref JumpSubnet
+          AssociatePublicIpAddress: false
+          GroupSet:
+            - !Ref JumpServerSecurityGroup
+          DeviceIndex: 0
+          DeleteOnTermination: true
+      DisableApiTermination: false
+      IamInstanceProfile: !Ref JumpServerInstanceProfile
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash
+          set -o xtrace
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm
+          yum-config-manager --disable mysql80-community
+          yum-config-manager --enable mysql57-community
+          yum install -y mysql-community-client
+          /opt/aws/bin/cfn-signal --exit-code $? \
+                   --stack  ${AWS::StackName} \
+                   --resource NodeGroup  \
+                   --region ${AWS::Region}
+        # MySQL5.7クライアントのインストール
+        # SSMエージェントのインストール(AWS上のSystemManagerからのリクエストを処理できるようになる)
+        # cfn-signal = EC2インスタンスが正常に作成されたかどうかをCloudFormationに送信する
+
+Outputs:
+  RDSEndpoint:
+    Value: !GetAtt WeatherDB.Endpoint.Address

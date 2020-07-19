@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  BaseName:
+    Type: String
+    Default: weather-services
+
+  BaseVPC:
+    Type: AWS::EC2::VPC::Id
+
+  Anywhere:
+    Type: String
+    Default: 0.0.0.0/0
+  
+
+
+Resources:
+  # ------------------------------------------------------------#
+  # Subnet
+  # ------------------------------------------------------------#
+  RdsTestSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: rds-subnet-group-weather-services-test
+      DBSubnetGroupDescription: "DB Subnet Group For Test"
+      SubnetIds:
+        - subnet-0fd4364c0b817b9a3
+        - subnet-069aeb1fd4f010bb3
+        # add subnets to cover at least 2 availability zones
+
+  # ------------------------------------------------------------#
+  # SecurityGroup
+  # ------------------------------------------------------------#
+  RdsTestSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for RDSTest
+      GroupName: security-group-weather-services-rds-test
+      VpcId: !Ref BaseVPC
+
+  RdsTestIngressFromAnywhere:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsTestSecurityGroup
+      CidrIp: !Ref Anywhere
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  # ------------------------------------------------------------#
+  # DB
+  # ------------------------------------------------------------#
+  WeatherDBTest:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: weather-services-test
+      Engine: mysql
+      EngineVersion: 5.7.30
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: 10
+      StorageType: gp2
+      DBName: weather_services_test
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsTestMasterSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsTestMasterSecret, ':SecretString:password}}' ]]
+      MultiAZ: false
+      DBSubnetGroupName: !Ref RdsTestSubnetGroup
+      PubliclyAccessible: true # need to activate DNS resolution at VPC
+      PreferredMaintenanceWindow: sat:19:00-sat:19:30
+      AutoMinorVersionUpgrade: false
+      DBParameterGroupName: !Ref DBParameterGroup
+      VPCSecurityGroups:
+        - !Ref RdsTestSecurityGroup
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mysql5.7
+      Description: Parameter Group for MySQL 5.7
+  
+  RdsTestMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "weathertestadmin"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'''
+      Name: RdsTestMasterSecret
+
+  RdsSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RdsTestMasterSecret
+      TargetId: !Ref WeatherDBTest
+      TargetType: AWS::RDS::DBInstance
+
+
+
+Outputs:
+  RDSEndpoint:
+    Value: !GetAtt WeatherDBTest.Endpoint.Address
