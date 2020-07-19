@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: weather-api-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: weather-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-api-deployment
+  labels:
+    app: weather-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: weather-api
+  template:
+    metadata:
+      labels:
+        app: weather-api
+    spec:
+      containers:
+        - name: weather-api
+          image: ${ECR_HOST}/weather-services/weather-api:0.0.1
+          imagePullPolicy: Always
+          ports:
+          - containerPort: 8000
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  key: db-url
+                  name: db-config
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  key: db-username
+                  name: db-config
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: db-password
+                  name: db-config
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  key: db-name
+                  name: db-config
+          livenessProbe:
+            httpGet:
+              port: 8000
+              path: /health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+        - name: nginx
+          image: ${ECR_HOST}/weather-services/nginx:0.0.1
+          imagePullPolicy: Always
+          ports:
+          - containerPort: 80
+          livenessProbe:
+            httpGet:
+              port: 80
+              path: /health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      nodeSelector:
+        nodegroup: public-nodegroup
+
+
