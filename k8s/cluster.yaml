@@ -1,0 +1,32 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: weather-service-cluster
+  region: ap-northeast-1
+
+vpc:
+  subnets:
+    public:
+      # subnetのIdは環境に応じて手動で記載
+      ap-northeast-1a: { id: ''}
+      ap-northeast-1c: { id: ''}
+    private:
+      ap-northeast-1a: { id: ''}
+      ap-northeast-1c: { id: ''}
+
+
+nodeGroups:
+  - name: weather-services-api
+    instanceType: t2.small
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 4
+    labels: {nodegroup: public-nodegroup}
+  - name: weather-services-store
+    instanceType: t2.small
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 5
+    labels: {nodegroup: private-nodegroup}
+    privateNetworking: true
